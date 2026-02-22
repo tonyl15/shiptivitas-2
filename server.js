@@ -6,7 +6,7 @@ const app = express();
 app.use(express.json());
 
 app.get('/', (req, res) => {
-  return res.status(200).send({'message': 'SHIPTIVITY API. Read documentation to see API docs'});
+  return res.status(200).send({ 'message': 'SHIPTIVITY API. Read documentation to see API docs' });
 });
 
 // We are keeping one connection alive for the rest of the life application for simplicity
@@ -26,8 +26,8 @@ const validateId = (id) => {
     return {
       valid: false,
       messageObj: {
-      'message': 'Invalid id provided.',
-      'long_message': 'Id can only be integer.',
+        'message': 'Invalid id provided.',
+        'long_message': 'Id can only be integer.',
       },
     };
   }
@@ -36,8 +36,8 @@ const validateId = (id) => {
     return {
       valid: false,
       messageObj: {
-      'message': 'Invalid id provided.',
-      'long_message': 'Cannot find client with that id.',
+        'message': 'Invalid id provided.',
+        'long_message': 'Cannot find client with that id.',
       },
     };
   }
@@ -55,8 +55,8 @@ const validatePriority = (priority) => {
     return {
       valid: false,
       messageObj: {
-      'message': 'Invalid priority provided.',
-      'long_message': 'Priority can only be positive integer.',
+        'message': 'Invalid priority provided.',
+        'long_message': 'Priority can only be positive integer.',
       },
     };
   }
@@ -92,7 +92,7 @@ app.get('/api/v1/clients', (req, res) => {
  * GET /api/v1/clients/{client_id} - get client by id
  */
 app.get('/api/v1/clients/:id', (req, res) => {
-  const id = parseInt(req.params.id , 10);
+  const id = parseInt(req.params.id, 10);
   const { valid, messageObj } = validateId(id);
   if (!valid) {
     res.status(400).send(messageObj);
@@ -115,20 +115,51 @@ app.get('/api/v1/clients/:id', (req, res) => {
  *
  */
 app.put('/api/v1/clients/:id', (req, res) => {
-  const id = parseInt(req.params.id , 10);
+  // Validate id
+  const id = parseInt(req.params.id, 10);
   const { valid, messageObj } = validateId(id);
   if (!valid) {
     res.status(400).send(messageObj);
   }
 
+  // Find client with the id provided
   let { status, priority } = req.body;
   let clients = db.prepare('select * from clients').all();
   const client = clients.find(client => client.id === id);
 
   /* ---------- Update code below ----------*/
+  // Update status if status is provided and valid
+  if (status) {
+    if (status !== 'backlog' && status !== 'in-progress' && status !== 'complete') {
+      return res.status(400).send({
+        'message': 'Invalid status provided.',
+        'long_message': 'Status can only be one of the following: [backlog | in-progress | complete].',
+      });
+    }
+    client.status = status;
+  }
 
+  // Update priority if priority is provided and valid. Update the rest of the clients on the same status accordingly
+  if (priority) {
+    const { valid: validPriority, messageObj: priorityMessageObj } = validatePriority(priority);
+    if (!validPriority) {
+      return res.status(400).send(priorityMessageObj);
+    }
 
+    client.priority = priority;
+    const clientsOnSameStatus = clients.filter(c => c.status === client.status && c.id !== client.id);
+    clientsOnSameStatus.sort((a, b) => a.priority - b.priority);
+    clientsOnSameStatus.splice(priority - 1, 0, client);
+  } else { // If priority is not provided, put the client to the end of the list on the same status
+    const maxPriority = Math.max(...clients.filter(c => c.status === client.status && c.id !== client.id).map(c => c.priority), 0);
+    client.priority = maxPriority + 1;
+  }
 
+  // Save changes to database
+  db.prepare('update clients set status = ?, priority = ? where id = ?').run(client.status, client.priority, id);
+
+  // Fetch and return updated clients list
+  clients = db.prepare('select * from clients').all();
   return res.status(200).send(clients);
 });
 
